@@ -133,6 +133,7 @@ export interface ExamResult {
   detailJawaban?: Record<number, AnswerValue>;
   itemResponses?: Record<number, StudentItemResponse>;
   durasiPengerjaan?: string;
+  mataPelajaran?: string;
 }
 
 export type AppStage = 1 | 2 | 3 | 4;

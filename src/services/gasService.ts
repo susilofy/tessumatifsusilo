@@ -16,8 +16,11 @@ export const gasService = {
     try {
       const custom = localStorage.getItem(STORAGE_CUSTOM_GAS_URL_KEY);
       if (custom && custom.trim().startsWith('http')) {
-        // Jika URL tersimpan adalah URL versi lama, perbarui ke URL aktif
-        if (custom.includes('AKfycbzBuJrheUE3MRAvNlUEZut3q0LQL5-J62sy8w_rfsBz72VJGt7IHyFPj0WORSB8dUCmeQ')) {
+        // Jika URL tersimpan adalah URL versi lama, perbarui ke URL aktif bawaan
+        if (
+          custom.includes('AKfycbzBuJrheUE3MRAvNlUEZut3q0LQL5-J62sy8w_rfsBz72VJGt7IHyFPj0WORSB8dUCmeQ') ||
+          custom.includes('AKfycbx6Bki20asJdxZX-I6kmXwGIyd6pOApUMTD-92t7rFVdIuYH86ApVatKYEsBbZYttJSng')
+        ) {
           localStorage.removeItem(STORAGE_CUSTOM_GAS_URL_KEY);
           return CONFIG.GOOGLE_APPS_SCRIPT_URL;
         }
@@ -487,6 +490,7 @@ export const gasService = {
             salah,
             nilai,
             status: status === 'Lulus' ? 'Lulus' : 'Belum Lulus',
+            mataPelajaran: item['Mata Pelajaran'] || item.mataPelajaran || item.subject || item._sheetSource || CONFIG.MATA_PELAJARAN,
           };
         });
 
@@ -496,7 +500,8 @@ export const gasService = {
         const alreadyInRemote = combined.some(
           (rem) =>
             rem.nama.trim().toLowerCase() === loc.nama.trim().toLowerCase() &&
-            rem.noAbsen === loc.noAbsen
+            rem.noAbsen === loc.noAbsen &&
+            (rem.mataPelajaran === loc.mataPelajaran || !loc.mataPelajaran)
         );
         if (!alreadyInRemote) {
           combined.push(loc);
@@ -513,7 +518,7 @@ export const gasService = {
   /**
    * Menghapus data dari Google Spreadsheet via GAS dan Penyimpanan Lokal
    */
-  async deleteExamResult(timestamp: string, nama: string): Promise<boolean> {
+  async deleteExamResult(timestamp: string, nama: string, mataPelajaran?: string): Promise<boolean> {
     // 1. Hapus dari penyimpanan lokal terlebih dahulu
     this.deleteLocalExamResult(timestamp, nama);
 
@@ -525,6 +530,7 @@ export const gasService = {
       timestamp,
       nama,
       studentName: nama,
+      mataPelajaran: mataPelajaran || CONFIG.MATA_PELAJARAN,
     };
 
     try {
@@ -557,7 +563,7 @@ export const gasService = {
   /**
    * Menghapus SEMUA hasil tes siswa (di penyimpanan lokal dan di remote Google Spreadsheet jika terhubung)
    */
-  async clearAllExamResults(): Promise<{ success: boolean; clearedRemote: boolean; message: string }> {
+  async clearAllExamResults(mataPelajaran?: string, allSheets: boolean = false): Promise<{ success: boolean; clearedRemote: boolean; message: string }> {
     // 1. Kosongkan penyimpanan lokal segera
     this.clearAllLocalExamResults();
 
@@ -576,7 +582,11 @@ export const gasService = {
         headers: {
           'Content-Type': 'text/plain;charset=utf-8',
         },
-        body: JSON.stringify({ action: 'clearAll' }),
+        body: JSON.stringify({ 
+          action: 'clearAll', 
+          mataPelajaran: mataPelajaran || CONFIG.MATA_PELAJARAN,
+          allSheets: allSheets 
+        }),
       });
 
       if (response.ok) {
@@ -624,50 +634,92 @@ export const gasService = {
 
 /**
  * Template Skrip Google Apps Script untuk Google Spreadsheet
+ * MENDUKUNG 1 SPREADSHEET UNTUK BERBAGAI MAPEL & BANYAK APLIKASI WEB
  */
 export const GAS_SCRIPT_TEMPLATE = `/**
- * SKRIP GOOGLE APPS SCRIPT UNTUK REKAP TES SUMATIF
- * SEKOLAH DASAR - JEMBRANA - KELAS VI
+ * SKRIP GOOGLE APPS SCRIPT UNTUK REKAP MULTI-MAPEL & MULTI-APLIKASI
+ * DALAM 1 FILE GOOGLE SPREADSHEET (SEKOLAH DASAR - JEMBRANA)
+ *
+ * FITUR UNGGULAN:
+ * 1. Mendukung berbagai Mata Pelajaran (Matematika, IPAS, Bahasa Indonesia, Pendidikan Pancasila, dll.)
+ * 2. Mendukung banyak Aplikasi Web yang mengarah ke 1 URL Spreadsheet yang sama.
+ * 3. AUTO TAB-ROUTING: Data otomatis masuk ke Tab Sheet sesuai nama Mapel.
+ * 4. AUTO-CREATE TAB: Jika Tab Sheet mapel belum ada, skrip OTOMATIS membuatkan Tab baru
+ *    lengkap dengan Baris Header berwarna biru profesional dan Freeze Baris 1!
+ * 5. Fitur Read Fleksibel: Bisa membaca satu mapel tertentu atau membaca seluruh tab mapel.
  *
  * PANDUAN PEMASANGAN (HANYA 2 MENIT):
  * 1. Buat Spreadsheet baru di https://sheets.new
- * 2. Beri nama: "Rekap Nilai Tes Sumatif Matematika Sekolah Dasar"
- * 3. Buka menu "Ekstensi" -> "Apps Script"
- * 4. Hapus semua kode default, lalu salin dan tempel SELURUH KODE di bawah ini
- * 5. Klik "Simpan" (ikon disket)
+ * 2. Beri nama file: "Rekap Nilai Siswa - Seluruh Mata Pelajaran"
+ * 3. Buka menu "Ekstensi" (Extensions) -> "Apps Script"
+ * 4. Hapus semua kode bawaan, lalu tempel SELURUH KODE di bawah ini
+ * 5. Klik ikon Simpan (Save)
  * 6. Klik tombol biru "Terapkan" (Deploy) -> "Penerapan Baru" (New Deployment)
  * 7. Pilih jenis: "Aplikasi Web" (Web App)
  * 8. PENGATURAN WAJIB:
  *    - Jalankan sebagai (Execute as): "Saya" (Me)
- *    - Siapa yang memiliki akses (Who has access): "Siapa saja" (Anyone) -> SANGAT PENTING!
+ *    - Siapa yang memiliki akses (Who has access): "Siapa saja" (Anyone) -> WAJIB!
  * 9. Klik "Terapkan", berikan Otorisasi Akun Google Anda
- * 10. Salin URL Aplikasi Web (berakhiran /exec) dan tempelkan ke menu "Pengaturan URL Spreadsheet" di Panel Guru.
+ * 10. Salin URL Aplikasi Web (berakhiran /exec) dan pasang di aplikasi web Anda.
  */
 
 function doGet(e) {
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    var data = sheet.getDataRange().getValues();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var targetSheetName = (e && e.parameter && (e.parameter.mataPelajaran || e.parameter.sheet)) 
+      ? String(e.parameter.mataPelajaran || e.parameter.sheet).trim() 
+      : "";
     
-    if (data.length <= 1) {
-      return ContentService.createTextOutput(JSON.stringify({ success: true, data: [] }))
-        .setMimeType(ContentService.MimeType.JSON);
-    }
-    
-    var headers = data[0];
-    var results = [];
-    
-    for (var i = 1; i < data.length; i++) {
-      var row = data[i];
-      var item = {};
-      for (var j = 0; j < headers.length; j++) {
-        var headerKey = String(headers[j]).trim();
-        item[headerKey] = row[j];
+    var sheetsToRead = [];
+    if (targetSheetName && targetSheetName.toUpperCase() !== "ALL") {
+      var s = ss.getSheetByName(targetSheetName);
+      if (s) {
+        sheetsToRead.push(s);
+      } else {
+        // Coba cari case-insensitive
+        var all = ss.getSheets();
+        for (var m = 0; m < all.length; m++) {
+          if (all[m].getName().toUpperCase() === targetSheetName.toUpperCase()) {
+            sheetsToRead.push(all[m]);
+            break;
+          }
+        }
+        if (sheetsToRead.length === 0) {
+          sheetsToRead.push(ss.getActiveSheet());
+        }
       }
-      results.push(item);
+    } else {
+      // Baca semua tab sheet yang ada dalam spreadsheet
+      sheetsToRead = ss.getSheets();
     }
     
-    return ContentService.createTextOutput(JSON.stringify({ success: true, data: results }))
+    var allResults = [];
+    for (var k = 0; k < sheetsToRead.length; k++) {
+      var currentSheet = sheetsToRead[k];
+      var sheetName = currentSheet.getName();
+      var data = currentSheet.getDataRange().getValues();
+      if (data.length <= 1) continue;
+      
+      var headers = data[0];
+      for (var i = 1; i < data.length; i++) {
+        var row = data[i];
+        // Lewati baris kosong
+        if (!row[1] && !row[0]) continue;
+        
+        var item = { _sheetSource: sheetName };
+        for (var j = 0; j < headers.length; j++) {
+          var headerKey = String(headers[j]).trim();
+          item[headerKey] = row[j];
+        }
+        // Pastikan kolom Mata Pelajaran terisi nama sheet jika kosong
+        if (!item["Mata Pelajaran"] && !item["mataPelajaran"]) {
+          item["Mata Pelajaran"] = sheetName;
+        }
+        allResults.push(item);
+      }
+    }
+    
+    return ContentService.createTextOutput(JSON.stringify({ success: true, data: allResults }))
       .setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({ success: false, error: error.toString() }))
@@ -679,11 +731,19 @@ function doPost(e) {
   try {
     var raw = e.postData ? e.postData.contents : "{}";
     var contents = JSON.parse(raw);
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
     
-    // Inisialisasi Header jika sheet masih kosong
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow([
+    // 1. Tentukan Nama Tab Sheet Berdasarkan Mata Pelajaran
+    var rawSubject = contents.mataPelajaran || contents.subject || "MATEMATIKA";
+    var sheetName = String(rawSubject).trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+    if (!sheetName) sheetName = "MATEMATIKA";
+    
+    var sheet = ss.getSheetByName(sheetName);
+    
+    // 2. OTOMATIS BUAT TAB SHEET BARU JIKA BELUM TERSEDIA
+    if (!sheet) {
+      sheet = ss.insertSheet(sheetName);
+      var headerRow = [
         "Timestamp",
         "Nama",
         "Kelas",
@@ -693,11 +753,21 @@ function doPost(e) {
         "Salah",
         "Nilai",
         "Status",
-        "Mata Pelajaran"
-      ]);
+        "Mata Pelajaran",
+        "Sekolah"
+      ];
+      sheet.appendRow(headerRow);
+      
+      // Berikan style header profesional (Biru Royal, Teks Putih Tebal, Rata Tengah)
+      var headerRange = sheet.getRange(1, 1, 1, headerRow.length);
+      headerRange.setFontWeight("bold");
+      headerRange.setBackground("#1d4ed8");
+      headerRange.setFontColor("#ffffff");
+      headerRange.setHorizontalAlignment("center");
+      sheet.setFrozenRows(1);
     }
     
-    // Fitur Delete jika diminta
+    // 3. Fitur Delete Baris Siswa Satuan
     if (contents.action === "delete") {
       var data = sheet.getDataRange().getValues();
       var targetTimestamp = String(contents.timestamp || "").trim();
@@ -708,27 +778,46 @@ function doPost(e) {
         var rowName = String(data[i][1]).trim().toLowerCase();
         if ((targetTimestamp && rowTime === targetTimestamp) || (targetNama && rowName === targetNama)) {
           sheet.deleteRow(i + 1);
-          return ContentService.createTextOutput(JSON.stringify({ success: true, message: "Data berhasil dihapus" }))
-            .setMimeType(ContentService.MimeType.JSON);
+          return ContentService.createTextOutput(JSON.stringify({ 
+            success: true, 
+            message: "Data siswa berhasil dihapus dari tab [" + sheetName + "]" 
+          })).setMimeType(ContentService.MimeType.JSON);
         }
       }
-      return ContentService.createTextOutput(JSON.stringify({ success: false, message: "Data tidak ditemukan" }))
+      return ContentService.createTextOutput(JSON.stringify({ success: false, message: "Data tidak ditemukan di tab " + sheetName }))
         .setMimeType(ContentService.MimeType.JSON);
     }
     
-    // Fitur Hapus Seluruh Data Siswa (Mempertahankan Baris Header Kolom ke-1)
+    // 4. Fitur Hapus Seluruh Data Siswa (Mempertahankan Baris Header Kolom ke-1)
     if (contents.action === "clearAll" || contents.action === "deleteAll") {
-      var lastRow = sheet.getLastRow();
-      if (lastRow > 1) {
-        sheet.deleteRows(2, lastRow - 1);
+      if (contents.allSheets === true) {
+        // Bersihkan semua tab sheet
+        var allSheets = ss.getSheets();
+        for (var sIdx = 0; sIdx < allSheets.length; sIdx++) {
+          var s = allSheets[sIdx];
+          var lRow = s.getLastRow();
+          if (lRow > 1) {
+            s.deleteRows(2, lRow - 1);
+          }
+        }
+        return ContentService.createTextOutput(JSON.stringify({ 
+          success: true, 
+          message: "Seluruh data siswa di SEMUA tab mata pelajaran berhasil dihapus (Header tetap tersimpan)." 
+        })).setMimeType(ContentService.MimeType.JSON);
+      } else {
+        // Bersihkan hanya di tab sheet mapel ini
+        var lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          sheet.deleteRows(2, lastRow - 1);
+        }
+        return ContentService.createTextOutput(JSON.stringify({ 
+          success: true, 
+          message: "Seluruh data siswa pada tab [" + sheetName + "] berhasil dihapus (Header tetap tersimpan)." 
+        })).setMimeType(ContentService.MimeType.JSON);
       }
-      return ContentService.createTextOutput(JSON.stringify({ 
-        success: true, 
-        message: "Seluruh data siswa berhasil dihapus dari Spreadsheet (header kolom tetap tersimpan)" 
-      })).setMimeType(ContentService.MimeType.JSON);
     }
     
-    // Fitur Tambah / Simpan Hasil Tes Siswa
+    // 5. Simpan Hasil Tes Siswa (Append Row ke Tab Mapel)
     var timestamp = contents.timestamp || Utilities.formatDate(new Date(), "GMT+8", "dd/MM/yyyy HH:mm:ss");
     var nama = contents.studentName || contents.nama || "";
     var kelas = contents.className || contents.kelas || "VI";
@@ -738,7 +827,8 @@ function doPost(e) {
     var salah = contents.incorrectCount !== undefined ? contents.incorrectCount : (contents.salah || 0);
     var nilai = contents.finalScore !== undefined ? contents.finalScore : (contents.nilai || 0);
     var status = contents.status || (nilai >= 70 ? "Lulus" : "Belum Lulus");
-    var mataPelajaran = contents.mataPelajaran || "MATEMATIKA";
+    var mapel = contents.mataPelajaran || rawSubject;
+    var sekolah = contents.sekolah || "SEKOLAH DASAR";
     
     sheet.appendRow([
       timestamp,
@@ -750,12 +840,13 @@ function doPost(e) {
       salah,
       nilai,
       status,
-      mataPelajaran
+      mapel,
+      sekolah
     ]);
     
     return ContentService.createTextOutput(JSON.stringify({
       success: true,
-      message: "Hasil tes siswa berhasil disimpan ke spreadsheet"
+      message: "Hasil tes siswa berhasil disimpan ke tab [" + sheetName + "] di Google Spreadsheet!"
     })).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
     return ContentService.createTextOutput(JSON.stringify({

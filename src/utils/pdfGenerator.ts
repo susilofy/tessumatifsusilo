@@ -369,11 +369,12 @@ export function downloadExamQuestionsPDF(questions: Question[]): void {
  * 3. Export Rekap Nilai ke Format CSV (Bisa dibuka langsung di Microsoft Excel)
  */
 export function exportResultsToCSV(results: ExamResult[]): void {
-  const headers = ['Timestamp', 'Nama Siswa', 'Kelas', 'Nomor Absen', 'Tanggal Lahir', 'Benar', 'Salah', 'Nilai', 'Status'];
+  const headers = ['Timestamp', 'Nama Siswa', 'Mata Pelajaran', 'Kelas', 'Nomor Absen', 'Tanggal Lahir', 'Benar', 'Salah', 'Nilai', 'Status'];
 
   const rows = results.map((r) => [
     `"${r.timestamp || ''}"`,
     `"${r.nama || ''}"`,
+    `"${r.mataPelajaran || CONFIG.MATA_PELAJARAN}"`,
     `"${r.kelas || CONFIG.KELAS}"`,
     `"${r.noAbsen || ''}"`,
     `"${r.tglLahir || ''}"`,

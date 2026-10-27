@@ -73,6 +73,7 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [filterKelas, setFilterKelas] = useState('Semua');
   const [filterStatus, setFilterStatus] = useState('Semua');
+  const [filterMapel, setFilterMapel] = useState('Semua');
   const [filterTanggal, setFilterTanggal] = useState('');
 
   // Sorting
@@ -129,7 +130,11 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
     setIsDeleting(true);
     try {
       // Coba kirim request delete ke Google Apps Script
-      await gasService.deleteExamResult(studentToDelete.timestamp, studentToDelete.nama);
+      await gasService.deleteExamResult(
+        studentToDelete.timestamp,
+        studentToDelete.nama,
+        studentToDelete.mataPelajaran
+      );
       // Hapus juga dari state lokal
       setResults((prev) =>
         prev.filter(
@@ -152,19 +157,28 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
   const handleConfirmDeleteAll = async () => {
     setIsDeletingAll(true);
     try {
-      const res = await gasService.clearAllExamResults();
-      setResults([]);
+      const res = await gasService.clearAllExamResults(
+        filterMapel !== 'Semua' ? filterMapel : undefined,
+        filterMapel === 'Semua'
+      );
+      if (filterMapel === 'Semua') {
+        setResults([]);
+      } else {
+        setResults((prev) =>
+          prev.filter((r) => (r.mataPelajaran || CONFIG.MATA_PELAJARAN).toUpperCase() !== filterMapel.toUpperCase())
+        );
+      }
       setIsDeletingAll(false);
       setShowDeleteAllModal(false);
       setConfirmDeleteInput('');
       setDeleteAllNotification({
         type: 'success',
-        message: res.message || 'Seluruh data nilai siswa berhasil dihapus.',
+        message: res.message || 'Data nilai siswa berhasil dibersihkan.',
       });
       setTimeout(() => setDeleteAllNotification(null), 6000);
     } catch (err: any) {
       setIsDeletingAll(false);
-      setResults([]);
+      if (filterMapel === 'Semua') setResults([]);
       setShowDeleteAllModal(false);
       setDeleteAllNotification({
         type: 'error',
@@ -173,6 +187,16 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
       setTimeout(() => setDeleteAllNotification(null), 6000);
     }
   };
+
+  // Daftar Mata Pelajaran Unik yang Ada di Data
+  const uniqueMapels = useMemo(() => {
+    const set = new Set<string>();
+    set.add(CONFIG.MATA_PELAJARAN);
+    results.forEach((r) => {
+      if (r.mataPelajaran) set.add(r.mataPelajaran.toUpperCase());
+    });
+    return Array.from(set);
+  }, [results]);
 
   // Statistik Ringkasan
   const stats = useMemo(() => {
@@ -195,6 +219,13 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter((r) => r.nama.toLowerCase().includes(q));
+    }
+
+    // Filter mata pelajaran
+    if (filterMapel !== 'Semua') {
+      filtered = filtered.filter(
+        (r) => (r.mataPelajaran || CONFIG.MATA_PELAJARAN).toUpperCase() === filterMapel.toUpperCase()
+      );
     }
 
     // Filter kelas
@@ -231,7 +262,7 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
     });
 
     return filtered;
-  }, [results, searchQuery, filterKelas, filterStatus, filterTanggal, sortField, sortDirection]);
+  }, [results, searchQuery, filterMapel, filterKelas, filterStatus, filterTanggal, sortField, sortDirection]);
 
   // Pagination Slice
   const totalPages = Math.max(1, Math.ceil(filteredAndSortedResults.length / itemsPerPage));
@@ -506,7 +537,7 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
       {activeTab === 'rekap' && (
         <div className="bg-white rounded-b-2xl p-6 shadow-xs border border-t-0 border-slate-200 space-y-4">
           {/* Baris Filter & Pencarian */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {/* Pencarian Nama */}
             <div className="relative">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -520,6 +551,25 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
                 placeholder="Cari nama siswa..."
                 className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-500 focus:outline-none"
               />
+            </div>
+
+            {/* Filter Mata Pelajaran (Multi-Mapel) */}
+            <div>
+              <select
+                value={filterMapel}
+                onChange={(e) => {
+                  setFilterMapel(e.target.value);
+                  setCurrentPage(1);
+                }}
+                className="w-full px-3 py-2 text-xs rounded-xl border border-blue-300 bg-blue-50/50 text-blue-900 focus:ring-2 focus:ring-blue-500 focus:outline-none font-bold"
+              >
+                <option value="Semua">Semua Mapel</option>
+                {uniqueMapels.map((m) => (
+                  <option key={m} value={m}>
+                    Mapel: {m}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Filter Kelas */}
@@ -706,6 +756,7 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
                       <ArrowUpDown className="w-3 h-3 text-slate-400" />
                     </div>
                   </th>
+                  <th className="py-3 px-3">Mata Pelajaran</th>
                   <th className="py-3 px-3">Kelas</th>
                   <th
                     className="py-3 px-3 cursor-pointer hover:bg-slate-100 transition-colors text-center"
@@ -734,7 +785,7 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
               <tbody className="divide-y divide-slate-200">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-slate-500">
+                    <td colSpan={11} className="py-12 text-center text-slate-500">
                       <div className="inline-flex items-center gap-2">
                         <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
                         <span>Mengambil data dari Google Spreadsheet...</span>
@@ -743,7 +794,7 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
                   </tr>
                 ) : paginatedResults.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-12 text-center text-slate-500">
+                    <td colSpan={11} className="py-12 text-center text-slate-500">
                       <div className="max-w-xs mx-auto space-y-1">
                         <p className="font-semibold text-slate-700">
                           {results.length === 0
@@ -776,6 +827,11 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
                         </td>
                         <td className="py-3 px-3 font-semibold text-slate-900">
                           {row.nama}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="inline-block px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                            {row.mataPelajaran || CONFIG.MATA_PELAJARAN}
+                          </span>
                         </td>
                         <td className="py-3 px-3 text-slate-700 font-medium">
                           {row.kelas || CONFIG.KELAS}
