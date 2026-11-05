@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { CONFIG } from '../config';
 import {
   Question,
@@ -8,9 +8,15 @@ import {
   ExamResult,
   OptionItem,
   StudentItemResponse,
+  ViolationLog,
 } from '../types';
 import { gasService } from '../services/gasService';
 import { downloadExamQuestionsPDF } from '../utils/pdfGenerator';
+import {
+  enterFullscreen,
+  exitFullscreen,
+  isFullscreenActive,
+} from '../utils/fullscreenHelper';
 import {
   ChevronLeft,
   ChevronRight,
@@ -25,12 +31,19 @@ import {
   User,
   Check,
   RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  Maximize2,
+  AlertTriangle,
+  Lock,
+  EyeOff,
 } from 'lucide-react';
 
 interface Stage2ExamProps {
   student: StudentIdentity;
   questions: Question[];
   onFinishExam: (result: ExamResult) => void;
+  strictSecurityMode?: boolean;
 }
 
 // Fisher-Yates shuffle helper
@@ -47,6 +60,7 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
   student,
   questions,
   onFinishExam,
+  strictSecurityMode = true,
 }) => {
   // 1. Acak urutan soal dan opsi jawaban saat tes dimulai
   const shuffledQuestions = useMemo<ShuffledQuestion[]>(() => {
@@ -80,13 +94,39 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
 
   // State pengerjaan
   const [currentIndex, setCurrentIndex] = useState(0);
-  // Answers state keyed by question index (0 to 21)
+  // Answers state keyed by question index (0 to totalQuestions - 1)
   const [answers, setAnswers] = useState<Record<number, AnswerValue>>({});
   // Konfirmasi kirim modal
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   // Status pengiriman
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Anti-Cheat & Fullscreen States
+  const [isFullscreenBlocked, setIsFullscreenBlocked] = useState(false);
+  const [violationCount, setViolationCount] = useState(0);
+  const [violationLogs, setViolationLogs] = useState<ViolationLog[]>([]);
+  const [warningModal, setWarningModal] = useState<{
+    level: 1 | 2;
+    count: number;
+    time: string;
+  } | null>(null);
+  const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
+  const [autoSubmitNotice, setAutoSubmitNotice] = useState<string | null>(null);
+
+  // Refs untuk sinkronisasi event listener & debounce
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const isFinishedRef = useRef(false);
+  const isSubmittingRef = useRef(false);
+  isSubmittingRef.current = isSubmitting || isAutoSubmitting;
+  const lastViolationTimeRef = useRef<number>(0);
+  const strictModeRef = useRef(strictSecurityMode);
+  strictModeRef.current = strictSecurityMode;
+  const violationCountRef = useRef(0);
+  violationCountRef.current = violationCount;
+  const violationLogsRef = useRef<ViolationLog[]>([]);
+  violationLogsRef.current = violationLogs;
 
   const currentQ = shuffledQuestions[currentIndex];
   const totalQuestions = shuffledQuestions.length;
@@ -316,13 +356,202 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
       salah: salahCount,
       nilai: finalScore,
       status,
-      detailJawaban: answers,
+      detailJawaban: answersRef.current,
       itemResponses,
+      violationsCount: violationCountRef.current,
+      violationLogs: violationLogsRef.current,
+      submissionReason: 'normal',
     };
   };
 
+  // Fungsi Auto-Submit paksa jika pelanggaran mencapai batas 3x
+  const triggerAutoSubmit = async (
+    reason: string,
+    finalCount: number,
+    finalLogs: ViolationLog[]
+  ) => {
+    if (isFinishedRef.current) return;
+    isFinishedRef.current = true;
+    setIsAutoSubmitting(true);
+    setAutoSubmitNotice(
+      'Ujian dihentikan otomatis karena terdeteksi meninggalkan halaman sebanyak 3 kali. Jawaban yang telah diisi sedang dikirim ke server...'
+    );
 
-  // Proses Kirim Jawaban ke Google Apps Script
+    const baseResult = calculateResult();
+    const finalResult: ExamResult = {
+      ...baseResult,
+      violationsCount: finalCount,
+      violationLogs: finalLogs,
+      submissionReason: 'violation_limit',
+      terminationNote: 'Dihentikan oleh Sistem karena Pelanggaran Berpindah Tab (Mencapai batas 3x)',
+    };
+
+    try {
+      await gasService.submitExamResult(finalResult);
+    } catch (e) {
+      console.warn('Gagal submit exam result ke remote saat auto submit:', e);
+    } finally {
+      await exitFullscreen();
+      onFinishExam(finalResult);
+    }
+  };
+
+  // 1. Effect: Fullscreen Mandatory
+  useEffect(() => {
+    if (!strictSecurityMode) return;
+
+    // Coba minta masuk fullscreen di awal
+    enterFullscreen().then((success) => {
+      if (!success && !isFullscreenActive()) {
+        setIsFullscreenBlocked(true);
+      }
+    });
+
+    const handleFullscreenChange = () => {
+      if (!strictModeRef.current || isFinishedRef.current) return;
+      const active = isFullscreenActive();
+      if (!active) {
+        setIsFullscreenBlocked(true);
+      } else {
+        setIsFullscreenBlocked(false);
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
+    };
+  }, [strictSecurityMode]);
+
+  // 2. Effect: Deteksi Pindah Tab & Blur Aplikasi (Maksimal 3x Pelanggaran)
+  useEffect(() => {
+    if (!strictSecurityMode) return;
+
+    const recordViolation = (reason: string) => {
+      if (!strictModeRef.current || isFinishedRef.current || isSubmittingRef.current) return;
+
+      const now = Date.now();
+      // Debounce 2 detik agar blur dan visibilitychange tidak terhitung ganda
+      if (now - lastViolationTimeRef.current < 2000) return;
+      lastViolationTimeRef.current = now;
+
+      const prevCount = violationCountRef.current;
+      const newCount = prevCount + 1;
+      violationCountRef.current = newCount;
+      setViolationCount(newCount);
+
+      const timeStr = new Date().toLocaleTimeString('id-ID');
+      const newLog: ViolationLog = {
+        timestamp: timeStr,
+        reason,
+      };
+      const updatedLogs = [...violationLogsRef.current, newLog];
+      violationLogsRef.current = updatedLogs;
+      setViolationLogs(updatedLogs);
+
+      if (newCount === 1) {
+        setWarningModal({
+          level: 1,
+          count: 1,
+          time: timeStr,
+        });
+      } else if (newCount === 2) {
+        setWarningModal({
+          level: 2,
+          count: 2,
+          time: timeStr,
+        });
+      } else if (newCount >= 3) {
+        setWarningModal(null);
+        triggerAutoSubmit(
+          'Dihentikan oleh Sistem karena Pelanggaran Berpindah Tab (Mencapai batas 3x)',
+          3,
+          updatedLogs
+        );
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        recordViolation('Meninggalkan tab / browser diminimalkan');
+      }
+    };
+
+    const handleWindowBlur = () => {
+      recordViolation('Beralih jendela atau membuka aplikasi lain');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [strictSecurityMode]);
+
+  // 3. Effect: Pencegahan Keluar / Refresh / Shortcut Salin-Tempel & Context Menu
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!isFinishedRef.current) {
+        e.preventDefault();
+        e.returnValue = 'Ujian sedang berlangsung! Jika Anda keluar atau memuat ulang, data Anda dapat terganggu.';
+        return e.returnValue;
+      }
+    };
+
+    const handleContextMenu = (e: MouseEvent) => {
+      if (strictModeRef.current) {
+        e.preventDefault();
+        return false;
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!strictModeRef.current) return;
+      const key = e.key.toLowerCase();
+
+      // Blokir shortcut salin-tempel dan print/save: Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+U, Ctrl+P, Ctrl+S, Ctrl+R
+      if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'x', 'u', 'p', 's', 'r'].includes(key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+
+      // Blokir F12, F5
+      if (e.key === 'F12' || e.key === 'F5') {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+
+      // Blokir Ctrl+Shift+I / J / C (DevTools)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && ['i', 'j', 'c'].includes(key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('contextmenu', handleContextMenu);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('contextmenu', handleContextMenu);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  // Proses Kirim Jawaban ke Google Apps Script (Normal)
   const handleConfirmSubmit = async () => {
     // Validasi ulang semua soal terjawab
     if (!allAnswered) {
@@ -333,17 +562,19 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
 
     setIsSubmitting(true);
     setSubmitError(null);
+    isFinishedRef.current = true;
 
     const calculatedResult = calculateResult();
 
     try {
       // Kirim data ke Google Apps Script
       await gasService.submitExamResult(calculatedResult);
-      // Hanya tampilkan berhasil / pindah halaman setelah server merespons sukses!
+      await exitFullscreen();
       setIsSubmitting(false);
       setShowConfirmModal(false);
       onFinishExam(calculatedResult);
     } catch (err: any) {
+      isFinishedRef.current = false;
       setIsSubmitting(false);
       setSubmitError(
         err.message ||
@@ -356,7 +587,7 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
   const currentOptions = currentQ.shuffledOptions || currentQ.options || [];
 
   return (
-    <div className="max-w-6xl mx-auto py-6 px-4 sm:px-6">
+    <div className="max-w-6xl mx-auto py-6 px-4 sm:px-6 select-none" onContextMenu={(e) => strictSecurityMode && e.preventDefault()}>
       {/* Header Info Siswa & Progres */}
       <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-slate-200 mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -365,7 +596,7 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
               <User className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-bold text-slate-900">{student.nama}</span>
                 <span className="text-xs bg-slate-100 text-slate-700 font-semibold px-2 py-0.5 rounded">
                   Absen: {student.noAbsen}
@@ -373,6 +604,24 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
                 <span className="text-xs bg-blue-50 text-blue-700 font-semibold px-2 py-0.5 rounded">
                   Kelas {CONFIG.KELAS}
                 </span>
+
+                {strictSecurityMode ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold px-2 py-0.5 rounded-full">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Anti-Pindah Tab Aktif</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 font-medium px-2 py-0.5 rounded-full">
+                    Mode Fleksibel
+                  </span>
+                )}
+
+                {strictSecurityMode && violationCount > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[11px] bg-amber-100 text-amber-900 border border-amber-300 font-extrabold px-2 py-0.5 rounded-full animate-pulse">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Pelanggaran: {violationCount}/3</span>
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
                 {CONFIG.SEKOLAH} • {CONFIG.MATA_PELAJARAN} ({CONFIG.MATERI})
@@ -772,6 +1021,151 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
           </div>
         </div>
       )}
+
+      {/* 1. OVERLAY PEMBLOKIR: MODE LAYAR PENUH (FULLSCREEN MANDATORY) */}
+      {strictSecurityMode && isFullscreenBlocked && !isFinishedRef.current && !isAutoSubmitting && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border-2 border-red-500 text-center space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto shadow-inner">
+              <ShieldAlert className="w-9 h-9" />
+            </div>
+
+            <div>
+              <span className="inline-block px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-red-50 text-red-700 border border-red-200 mb-2">
+                Peringatan Integritas Ujian
+              </span>
+              <h3 className="text-lg sm:text-xl font-black text-slate-900 leading-snug">
+                Ujian Harus Dikerjakan dalam Mode Layar Penuh!
+              </h3>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                Untuk menjaga integritas dan ketertiban evaluasi, tes hanya dapat dikerjakan dalam tampilan layar penuh tanpa gangguan aplikasi lain.
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 text-left flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                Menekan tombol <strong>Esc</strong> atau berpindah layar terekam oleh sistem pengawasan guru.
+              </span>
+            </div>
+
+            <button
+              id="btn-resume-fullscreen"
+              type="button"
+              onClick={async () => {
+                const success = await enterFullscreen();
+                if (success || isFullscreenActive()) {
+                  setIsFullscreenBlocked(false);
+                }
+              }}
+              className="w-full py-3.5 px-6 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all cursor-pointer"
+            >
+              <Maximize2 className="w-5 h-5" />
+              <span>Aktifkan Layar Penuh &amp; Lanjutkan</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 2. MODAL PERINGATAN DETEKSI PINDAH TAB (PELANGGARAN 1 DAN 2) */}
+      {warningModal && !isAutoSubmitting && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-xs animate-in fade-in duration-150">
+          <div
+            className={`bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border-2 text-center space-y-4 ${
+              warningModal.level === 2 ? 'border-red-600' : 'border-amber-500'
+            }`}
+          >
+            <div
+              className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto ${
+                warningModal.level === 2 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
+              }`}
+            >
+              <AlertTriangle className="w-9 h-9 animate-bounce" />
+            </div>
+
+            <div>
+              <span
+                className={`inline-block px-3.5 py-1 rounded-full text-xs font-black uppercase tracking-wider mb-2 ${
+                  warningModal.level === 2
+                    ? 'bg-red-100 text-red-800 border border-red-300'
+                    : 'bg-amber-100 text-amber-800 border border-amber-300'
+                }`}
+              >
+                {warningModal.level === 1 ? 'Peringatan 1 dari 3' : 'Peringatan Darurat 2 dari 3'}
+              </span>
+
+              <h3 className="text-base sm:text-lg font-black text-slate-900">
+                {warningModal.level === 1
+                  ? 'Anda Terdeteksi Meninggalkan Halaman Ujian!'
+                  : 'Segera Kembali ke Soal Ujian!'}
+              </h3>
+
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                {warningModal.level === 1
+                  ? 'Aktivitas meninggalkan tab browser atau beralih aplikasi terekam oleh sistem pengawas. Harap tetap fokus pada lembar soal hingga selesai.'
+                  : 'PERINGATAN DARURAT: Satu kali pelanggaran lagi maka ujian akan langsung dihentikan otomatis dan jawaban Anda dikirim paksa (Auto-Submit) oleh sistem!'}
+              </p>
+
+              <div className="mt-3 py-1.5 px-3 bg-slate-100 rounded-lg text-[11px] text-slate-600 font-mono inline-block">
+                Waktu Pelanggaran: {warningModal.time}
+              </div>
+            </div>
+
+            <button
+              id="btn-dismiss-warning"
+              type="button"
+              onClick={async () => {
+                setWarningModal(null);
+                if (strictSecurityMode && !isFullscreenActive()) {
+                  await enterFullscreen();
+                }
+              }}
+              className={`w-full py-3.5 px-5 rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition-all cursor-pointer ${
+                warningModal.level === 2
+                  ? 'bg-red-600 hover:bg-red-700 shadow-red-600/30'
+                  : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/30'
+              }`}
+            >
+              {warningModal.level === 1
+                ? 'Saya Mengerti & Kembali Mengerjakan'
+                : 'Kembali ke Soal Ujian Sekarang'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3. OVERLAY AUTO-SUBMIT: PELANGGARAN MAKSIMUM (3 DARI 3) */}
+      {isAutoSubmitting && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/95 backdrop-blur-md">
+          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl border-2 border-red-600 text-center space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto shadow-inner">
+              <Lock className="w-8 h-8" />
+            </div>
+
+            <div>
+              <span className="inline-block px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-red-100 text-red-800 border border-red-300 mb-2">
+                Batas Pelanggaran Tercapai (3/3)
+              </span>
+              <h3 className="text-lg font-black text-slate-900">
+                Ujian Dihentikan Otomatis oleh Sistem!
+              </h3>
+              <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+                Anda telah terdeteksi meninggalkan halaman ujian sebanyak <strong>3 kali</strong>. Sesuai ketentuan pengawasan, ujian dikunci dan jawaban yang telah Anda isi otomatis dikirim ke server.
+              </p>
+            </div>
+
+            <div className="p-3 bg-red-50 rounded-xl border border-red-200 text-xs text-red-800 font-medium">
+              Status: <strong>Dihentikan oleh Sistem karena Pelanggaran Berpindah Tab</strong>
+            </div>
+
+            <div className="flex items-center justify-center gap-2.5 text-xs font-bold text-slate-600 pt-2">
+              <Loader2 className="w-5 h-5 animate-spin text-red-600" />
+              <span>Menyimpan hasil ke Google Spreadsheet...</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

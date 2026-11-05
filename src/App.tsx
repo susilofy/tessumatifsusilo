@@ -17,6 +17,7 @@ import { TeacherAuthModal } from './components/TeacherAuthModal';
 
 const STORAGE_QUESTIONS_KEY = 'sd3_loloan_timur_questions_v2';
 const STORAGE_ALLOW_REVIEW_KEY = 'sd3_loloan_timur_allow_review';
+const STORAGE_STRICT_SECURITY_KEY = 'sd3_strict_exam_mode';
 
 export default function App() {
   // Tahap aktif: 1 (Identitas), 2 (Soal Tes), 3 (Hasil Tes), 4 (Panel Guru)
@@ -56,6 +57,19 @@ export default function App() {
     }
   });
 
+  // Mode Keamanan Ketat (Anti-Cheat & Fullscreen Mandatory)
+  const [strictSecurityMode, setStrictSecurityMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_STRICT_SECURITY_KEY);
+      if (saved !== null) {
+        return saved === 'true';
+      }
+    } catch {
+      // fallback
+    }
+    return true; // Default aktif (pengawasan ketat)
+  });
+
   // Status autentikasi guru
   const [isTeacherAuthenticated, setIsTeacherAuthenticated] = useState<boolean>(false);
   const [showTeacherAuthModal, setShowTeacherAuthModal] = useState<boolean>(false);
@@ -88,6 +102,16 @@ export default function App() {
     setAllowReview(val);
     try {
       localStorage.setItem(STORAGE_ALLOW_REVIEW_KEY, String(val));
+    } catch {
+      // Storage fail silent
+    }
+  };
+
+  // Toggle Mode Keamanan Ketat (Anti-Cheat)
+  const handleToggleStrictSecurityMode = (val: boolean) => {
+    setStrictSecurityMode(val);
+    try {
+      localStorage.setItem(STORAGE_STRICT_SECURITY_KEY, String(val));
     } catch {
       // Storage fail silent
     }
@@ -156,6 +180,7 @@ export default function App() {
           <Stage1Identity
             onStartExam={handleStartExam}
             initialIdentity={studentIdentity || undefined}
+            strictSecurityMode={strictSecurityMode}
           />
         )}
 
@@ -165,6 +190,7 @@ export default function App() {
             student={studentIdentity}
             questions={questions}
             onFinishExam={handleFinishExam}
+            strictSecurityMode={strictSecurityMode}
           />
         )}
 
@@ -186,6 +212,8 @@ export default function App() {
             onResetDefaultQuestions={handleResetDefaultQuestions}
             allowReview={allowReview}
             onToggleAllowReview={handleToggleAllowReview}
+            strictSecurityMode={strictSecurityMode}
+            onToggleStrictSecurityMode={handleToggleStrictSecurityMode}
           />
         )}
       </main>

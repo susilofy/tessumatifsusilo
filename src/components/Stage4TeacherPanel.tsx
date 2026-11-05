@@ -44,6 +44,9 @@ import {
   RotateCcw,
   BarChart3,
   FileText,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface Stage4TeacherPanelProps {
@@ -52,6 +55,8 @@ interface Stage4TeacherPanelProps {
   allowReview: boolean;
   onToggleAllowReview: (val: boolean) => void;
   onResetDefaultQuestions?: () => void;
+  strictSecurityMode: boolean;
+  onToggleStrictSecurityMode: (val: boolean) => void;
 }
 
 export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
@@ -60,6 +65,8 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
   allowReview,
   onToggleAllowReview,
   onResetDefaultQuestions,
+  strictSecurityMode,
+  onToggleStrictSecurityMode,
 }) => {
   // State data hasil siswa
   const [results, setResults] = useState<ExamResult[]>([]);
@@ -410,6 +417,34 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
           >
             {allowReview ? <ToggleRight className="w-4 h-4 text-emerald-600" /> : <ToggleLeft className="w-4 h-4" />}
             <span>{allowReview ? 'Pembahasan Aktif' : 'Pembahasan Nonaktif'}</span>
+          </button>
+        </div>
+
+        {/* Toggle Mode Keamanan Ketat (Anti-Cheat & Fullscreen Mandatory) */}
+        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-slate-700">Mode Keamanan Ketat (Anti-Pindah Tab):</span>
+            <span className="text-slate-500">
+              {strictSecurityMode
+                ? 'Wajib layar penuh, blokir pindah tab (maksimal 3x toleransi lalu auto-submit), dilarang klik kanan.'
+                : 'Mode santai/latihan mandiri (layar penuh bebas, pindah tab diperbolehkan).'}
+            </span>
+          </div>
+          <button
+            id="btn-toggle-strict-security"
+            onClick={() => onToggleStrictSecurityMode(!strictSecurityMode)}
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+              strictSecurityMode
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-600 border border-slate-300 hover:bg-slate-200'
+            }`}
+          >
+            {strictSecurityMode ? (
+              <ShieldCheck className="w-4 h-4 text-emerald-300" />
+            ) : (
+              <ShieldAlert className="w-4 h-4 text-slate-400" />
+            )}
+            <span>{strictSecurityMode ? 'Keamanan Ketat (Aktif)' : 'Keamanan Santai (Nonaktif)'}</span>
           </button>
         </div>
       </div>
@@ -779,13 +814,14 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
                     </div>
                   </th>
                   <th className="py-3 px-3 text-center">Status</th>
+                  <th className="py-3 px-3 text-center">Integritas</th>
                   <th className="py-3 px-3 text-center w-36">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {isLoading ? (
                   <tr>
-                    <td colSpan={11} className="py-12 text-center text-slate-500">
+                    <td colSpan={12} className="py-12 text-center text-slate-500">
                       <div className="inline-flex items-center gap-2">
                         <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
                         <span>Mengambil data dari Google Spreadsheet...</span>
@@ -794,7 +830,7 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
                   </tr>
                 ) : paginatedResults.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="py-12 text-center text-slate-500">
+                    <td colSpan={12} className="py-12 text-center text-slate-500">
                       <div className="max-w-xs mx-auto space-y-1">
                         <p className="font-semibold text-slate-700">
                           {results.length === 0
@@ -866,6 +902,30 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
                           >
                             {row.status}
                           </span>
+                        </td>
+                        <td className="py-3 px-3 text-center">
+                          {row.submissionReason === 'violation_limit' ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black bg-red-100 text-red-800 border border-red-300"
+                              title={row.terminationNote || 'Dihentikan oleh Sistem karena Pelanggaran Berpindah Tab'}
+                            >
+                              <ShieldAlert className="w-3 h-3 text-red-600" />
+                              <span>3x Auto-Submit</span>
+                            </span>
+                          ) : row.violationsCount && row.violationsCount > 0 ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300"
+                              title={`${row.violationsCount} kali peringatan berpindah tab`}
+                            >
+                              <AlertTriangle className="w-3 h-3 text-amber-600" />
+                              <span>{row.violationsCount}x Peringatan</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700">
+                              <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                              <span>Tertib</span>
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-3 text-center">
                           <div className="flex items-center justify-center gap-1">

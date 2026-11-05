@@ -2,7 +2,20 @@ import React from 'react';
 import { CONFIG } from '../config';
 import { ExamResult } from '../types';
 import { downloadStudentResultPDF } from '../utils/pdfGenerator';
-import { X, Download, User, Calendar, Hash, Award, CheckCircle2, XCircle } from 'lucide-react';
+import {
+  X,
+  Download,
+  User,
+  Calendar,
+  Hash,
+  Award,
+  CheckCircle2,
+  XCircle,
+  ShieldAlert,
+  ShieldCheck,
+  AlertTriangle,
+  Lock,
+} from 'lucide-react';
 
 interface StudentDetailModalProps {
   result: ExamResult | null;
@@ -18,10 +31,12 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
   if (!isOpen || !result) return null;
 
   const isPass = result.status === 'Lulus' || result.nilai >= CONFIG.KKTP;
+  const violations = result.violationsCount || 0;
+  const isAutoSubmitted = result.submissionReason === 'violation_limit';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 relative">
+      <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 relative max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center">
@@ -69,7 +84,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Grid Rincian */}
+          {/* Grid Rincian Benar / Salah */}
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
               <div className="flex items-center gap-1.5 text-emerald-800 font-bold text-xs mb-1">
@@ -85,6 +100,58 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
               </div>
               <span className="text-xl font-black text-rose-900">{result.salah} Soal</span>
             </div>
+          </div>
+
+          {/* Catatan Integritas & Anti-Cheat */}
+          <div className={`p-3.5 rounded-xl border ${
+            isAutoSubmitted
+              ? 'bg-red-50 border-red-200 text-red-900'
+              : violations > 0
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+          }`}>
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-1.5 font-bold text-xs">
+                {isAutoSubmitted ? (
+                  <ShieldAlert className="w-4 h-4 text-red-600" />
+                ) : violations > 0 ? (
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                ) : (
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                )}
+                <span>Integritas &amp; Keamanan Ujian</span>
+              </div>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                isAutoSubmitted
+                  ? 'bg-red-200 text-red-900'
+                  : violations > 0
+                  ? 'bg-amber-200 text-amber-900'
+                  : 'bg-emerald-200 text-emerald-900'
+              }`}>
+                {isAutoSubmitted
+                  ? '3x Auto-Submit'
+                  : violations > 0
+                  ? `${violations}x Pelanggaran`
+                  : 'Tertib (0x)'}
+              </span>
+            </div>
+
+            {isAutoSubmitted && (
+              <p className="text-[11px] text-red-700 leading-snug">
+                {result.terminationNote || 'Ujian dihentikan paksa oleh sistem karena siswa melanggar toleransi 3x berpindah tab/aplikasi.'}
+              </p>
+            )}
+
+            {result.violationLogs && result.violationLogs.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-slate-200/60 text-[10px] space-y-1 font-mono">
+                {result.violationLogs.map((log, lIdx) => (
+                  <div key={lIdx} className="flex items-center gap-1.5">
+                    <span className="font-bold">#{lIdx + 1} ({log.timestamp}):</span>
+                    <span>{log.reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Meta Info */}

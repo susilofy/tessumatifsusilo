@@ -16,6 +16,9 @@ import {
   Brain,
   Lightbulb,
   GraduationCap,
+  ShieldAlert,
+  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface StudentAnalysisModalProps {
@@ -125,6 +128,53 @@ export const StudentAnalysisModal: React.FC<StudentAnalysisModalProps> = ({
               <span className="text-[11px] text-rose-700">Skor 0</span>
             </div>
           </div>
+
+          {/* CATATAN INTEGRITAS & LOG PELANGGARAN JIKA ADA */}
+          {((result.violationsCount && result.violationsCount > 0) || result.submissionReason === 'violation_limit') && (
+            <div className={`p-4 rounded-2xl border ${
+              result.submissionReason === 'violation_limit'
+                ? 'bg-red-50 border-red-300 text-red-900'
+                : 'bg-amber-50 border-amber-300 text-amber-900'
+            }`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2 font-bold text-xs sm:text-sm">
+                  {result.submissionReason === 'violation_limit' ? (
+                    <ShieldAlert className="w-5 h-5 text-red-600" />
+                  ) : (
+                    <AlertTriangle className="w-5 h-5 text-amber-600" />
+                  )}
+                  <span>Catatan Pengawasan &amp; Integritas Ujian</span>
+                </div>
+                <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full ${
+                  result.submissionReason === 'violation_limit'
+                    ? 'bg-red-200 text-red-900'
+                    : 'bg-amber-200 text-amber-900'
+                }`}>
+                  {result.submissionReason === 'violation_limit'
+                    ? 'Dihentikan Otomatis (3x Pelanggaran)'
+                    : `${result.violationsCount}x Peringatan Berpindah Tab`}
+                </span>
+              </div>
+
+              {result.terminationNote && (
+                <p className="text-xs font-semibold mb-2 text-red-800">
+                  {result.terminationNote}
+                </p>
+              )}
+
+              {result.violationLogs && result.violationLogs.length > 0 && (
+                <div className="pt-2 border-t border-slate-200/60 text-xs space-y-1">
+                  <span className="font-bold text-[11px] block">Log Waktu Insiden:</span>
+                  {result.violationLogs.map((log, lIdx) => (
+                    <div key={lIdx} className="flex items-center gap-2 font-mono text-[11px]">
+                      <span className="font-bold text-slate-700">#{lIdx + 1} ({log.timestamp}):</span>
+                      <span>{log.reason}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* MATRIKS STATUS RESPO BUTIR SOAL INDIVIDUAL */}
           <div className="bg-slate-50 rounded-2xl p-4 sm:p-5 border border-slate-200 space-y-3">

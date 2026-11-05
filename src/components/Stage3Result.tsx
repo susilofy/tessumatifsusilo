@@ -14,6 +14,9 @@ import {
   AlertTriangle,
   HelpCircle,
   Eye,
+  ShieldAlert,
+  ShieldCheck,
+  Lock,
 } from 'lucide-react';
 
 interface Stage3ResultProps {
@@ -30,9 +33,11 @@ export const Stage3Result: React.FC<Stage3ResultProps> = ({
   onRestart,
 }) => {
   const isPassed = result.status === 'Lulus' || result.nilai >= CONFIG.KKTP;
+  const isAutoSubmitted = result.submissionReason === 'violation_limit';
+  const violations = result.violationsCount || 0;
 
   useEffect(() => {
-    if (isPassed) {
+    if (isPassed && !isAutoSubmitted) {
       try {
         confetti({
           particleCount: 80,
@@ -43,7 +48,7 @@ export const Stage3Result: React.FC<Stage3ResultProps> = ({
         // Fallback jika confetti gagal
       }
     }
-  }, [isPassed]);
+  }, [isPassed, isAutoSubmitted]);
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4 sm:px-6">
@@ -52,7 +57,11 @@ export const Stage3Result: React.FC<Stage3ResultProps> = ({
         {/* Latar Aksen Atas */}
         <div
           className={`absolute top-0 left-0 right-0 h-3 ${
-            isPassed ? 'bg-emerald-500' : 'bg-amber-500'
+            isAutoSubmitted
+              ? 'bg-red-600'
+              : isPassed
+              ? 'bg-emerald-500'
+              : 'bg-amber-500'
           }`}
         />
 
@@ -60,10 +69,20 @@ export const Stage3Result: React.FC<Stage3ResultProps> = ({
         <div className="inline-flex items-center justify-center mb-4">
           <div
             className={`w-20 h-20 rounded-full flex items-center justify-center shadow-md ${
-              isPassed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+              isAutoSubmitted
+                ? 'bg-red-100 text-red-600'
+                : isPassed
+                ? 'bg-emerald-100 text-emerald-600'
+                : 'bg-amber-100 text-amber-600'
             }`}
           >
-            {isPassed ? <Award className="w-10 h-10" /> : <AlertTriangle className="w-10 h-10" />}
+            {isAutoSubmitted ? (
+              <ShieldAlert className="w-10 h-10" />
+            ) : isPassed ? (
+              <Award className="w-10 h-10" />
+            ) : (
+              <AlertTriangle className="w-10 h-10" />
+            )}
           </div>
         </div>
 
@@ -79,8 +98,46 @@ export const Stage3Result: React.FC<Stage3ResultProps> = ({
           {CONFIG.MATA_PELAJARAN} (Materi: {CONFIG.MATERI}) • Kelas {CONFIG.KELAS}
         </p>
 
+        {/* NOTIFIKASI KHUSUS PELANGGARAN / AUTO-SUBMIT JIKA TERJADI */}
+        {isAutoSubmitted ? (
+          <div className="my-6 max-w-xl mx-auto p-4 rounded-2xl bg-red-50 border-2 border-red-300 text-left space-y-2">
+            <div className="flex items-center gap-2 text-red-800 font-extrabold text-sm">
+              <ShieldAlert className="w-5 h-5 text-red-600 shrink-0" />
+              <span>Ujian Dihentikan Otomatis oleh Sistem (Auto-Submit)</span>
+            </div>
+            <p className="text-xs text-red-700 leading-relaxed">
+              {result.terminationNote ||
+                'Siswa terdeteksi meninggalkan halaman atau berpindah tab sebanyak 3 kali (batas maksimum toleransi tercapai). Jawaban yang telah terisi telah dikunci dan diserahkan secara otomatis.'}
+            </p>
+            {result.violationLogs && result.violationLogs.length > 0 && (
+              <div className="pt-2 border-t border-red-200/80 text-[11px] text-red-800 space-y-1">
+                <span className="font-bold block">Riwayat Waktu Insiden:</span>
+                {result.violationLogs.map((log, lIdx) => (
+                  <div key={lIdx} className="flex items-center gap-2 font-mono">
+                    <span className="w-4 h-4 rounded-full bg-red-200 text-red-900 flex items-center justify-center text-[10px] font-bold">
+                      {lIdx + 1}
+                    </span>
+                    <span>{log.timestamp}</span>
+                    <span className="text-red-600">- {log.reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : violations > 0 ? (
+          <div className="my-4 max-w-xl mx-auto p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs text-left flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold block">Catatan Integritas Ujian:</span>
+              <span>
+                Tercatat <strong>{violations} kali peringatan</strong> berpindah tab/aplikasi selama pengerjaan soal berlangsung.
+              </span>
+            </div>
+          </div>
+        ) : null}
+
         {/* Kotak Nilai Utama */}
-        <div className="my-8 max-w-sm mx-auto p-6 rounded-2xl bg-slate-50 border border-slate-200">
+        <div className="my-6 max-w-sm mx-auto p-6 rounded-2xl bg-slate-50 border border-slate-200">
           <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-1">
             Nilai Akhir Ujian
           </p>

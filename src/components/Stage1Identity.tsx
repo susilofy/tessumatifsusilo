@@ -13,11 +13,17 @@ import {
   FileText,
   Clock,
   Award,
+  ShieldAlert,
+  ShieldCheck,
+  Maximize2,
+  Lock,
 } from 'lucide-react';
+import { enterFullscreen } from '../utils/fullscreenHelper';
 
 interface Stage1IdentityProps {
   onStartExam: (identity: StudentIdentity) => void;
   initialIdentity?: StudentIdentity;
+  strictSecurityMode?: boolean;
 }
 
 const BULAN_LIST = [
@@ -38,6 +44,7 @@ const BULAN_LIST = [
 export const Stage1Identity: React.FC<Stage1IdentityProps> = ({
   onStartExam,
   initialIdentity,
+  strictSecurityMode = true,
 }) => {
   const [nama, setNama] = useState(initialIdentity?.nama || '');
   const [noAbsen, setNoAbsen] = useState(initialIdentity?.noAbsen || '');
@@ -46,7 +53,7 @@ export const Stage1Identity: React.FC<Stage1IdentityProps> = ({
   const [tahun, setTahun] = useState(initialIdentity?.tglLahir?.tahun || '');
   const [errorMessage, setErrorMessage] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // Validasi data wajib diisi
@@ -64,6 +71,16 @@ export const Stage1Identity: React.FC<Stage1IdentityProps> = ({
     }
 
     setErrorMessage('');
+
+    // Masuk ke mode fullscreen dalam konteks gesture klik pengguna jika strict mode aktif
+    if (strictSecurityMode) {
+      try {
+        await enterFullscreen();
+      } catch {
+        // Fallback ditangani di Stage2Exam
+      }
+    }
+
     onStartExam({
       nama: nama.trim(),
       noAbsen: noAbsen.trim(),
@@ -282,6 +299,34 @@ export const Stage1Identity: React.FC<Stage1IdentityProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Card Aturan Integritas Ujian & Anti-Cheat */}
+          {strictSecurityMode && (
+            <div className="bg-red-950/40 border border-red-800/60 rounded-2xl p-4 sm:p-5 text-white space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-red-600/30 text-red-400 flex items-center justify-center">
+                  <ShieldAlert className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-red-300">
+                    Protokol Integritas &amp; Keamanan Ujian
+                  </h4>
+                  <p className="text-[11px] text-red-200/80">Pengawasan otomatis aktif</p>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-[11px] text-red-100/90 leading-relaxed">
+                <p className="flex items-start gap-2 bg-red-900/30 p-2.5 rounded-xl border border-red-800/40">
+                  <Maximize2 className="w-4 h-4 text-red-300 shrink-0 mt-0.5" />
+                  <span><strong>Layar Penuh Wajib:</strong> Ujian otomatis berjalan dalam layar penuh. Dilarang menekan tombol Esc atau keluar.</span>
+                </p>
+                <p className="flex items-start gap-2 bg-red-900/30 p-2.5 rounded-xl border border-red-800/40">
+                  <Lock className="w-4 h-4 text-red-300 shrink-0 mt-0.5" />
+                  <span><strong>Batas 3x Toleransi:</strong> Berpindah tab atau aplikasi dicatat sistem. Pelanggaran ke-3 memicu <strong>Auto-Submit</strong> otomatis.</span>
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

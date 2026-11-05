@@ -252,6 +252,12 @@ export const gasService = {
       totalQuestions: (result.benar || 0) + (result.salah || 0),
       finalScore: result.nilai,
       answers: result.detailJawaban || {},
+      // Parameter Keamanan & Anti-Cheat
+      violationsCount: result.violationsCount || 0,
+      pelanggaran: result.violationsCount || 0,
+      violationLogs: result.violationLogs || [],
+      submissionReason: result.submissionReason || 'normal',
+      terminationNote: result.terminationNote || '',
     };
 
     try {
@@ -369,6 +375,10 @@ export const gasService = {
             nilai,
             status: status === 'Lulus' ? 'Lulus' : 'Belum Lulus',
             mataPelajaran: item['Mata Pelajaran'] || item.mataPelajaran || item.subject || item._sheetSource || CONFIG.MATA_PELAJARAN,
+            violationsCount: Number(item.violationsCount ?? item.pelanggaran ?? item['Pelanggaran'] ?? 0),
+            violationLogs: Array.isArray(item.violationLogs) ? item.violationLogs : [],
+            submissionReason: item.submissionReason || (Number(item.violationsCount || item.pelanggaran || 0) >= 3 ? 'violation_limit' : 'normal'),
+            terminationNote: item.terminationNote || item['Catatan Keamanan'] || item.catatan || '',
           };
         });
 

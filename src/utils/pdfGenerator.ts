@@ -138,11 +138,18 @@ export function downloadStudentResultPDF(result: ExamResult): void {
 
   // Baris-baris tabel
   const totalQuestionsCount = (result.benar || 0) + (result.salah || 0) > 0 ? (result.benar || 0) + (result.salah || 0) : 30;
+  const integrityStatus = result.submissionReason === 'violation_limit'
+    ? 'Dihentikan Otomatis (3x Pelanggaran Pindah Tab)'
+    : result.violationsCount && result.violationsCount > 0
+    ? `${result.violationsCount}x Peringatan Berpindah Tab`
+    : 'Tertib (0 Pelanggaran)';
+
   const tableRows = [
     { label: 'Jumlah Soal Keseluruhan', value: `${totalQuestionsCount} Butir Soal` },
     { label: 'Jumlah Jawaban Benar', value: `${result.benar} Soal` },
     { label: 'Jumlah Jawaban Salah / Tidak Tepat', value: `${result.salah} Soal` },
     { label: 'Kriteria Ketercapaian Tujuan Pembelajaran (KKTP)', value: `${CONFIG.KKTP}` },
+    { label: 'Integritas & Kedisiplinan Ujian', value: integrityStatus },
   ];
 
   doc.setFont('helvetica', 'normal');
@@ -369,20 +376,45 @@ export function downloadExamQuestionsPDF(questions: Question[]): void {
  * 3. Export Rekap Nilai ke Format CSV (Bisa dibuka langsung di Microsoft Excel)
  */
 export function exportResultsToCSV(results: ExamResult[]): void {
-  const headers = ['Timestamp', 'Nama Siswa', 'Mata Pelajaran', 'Kelas', 'Nomor Absen', 'Tanggal Lahir', 'Benar', 'Salah', 'Nilai', 'Status'];
+  const headers = [
+    'Timestamp',
+    'Nama Siswa',
+    'Mata Pelajaran',
+    'Kelas',
+    'Nomor Absen',
+    'Tanggal Lahir',
+    'Benar',
+    'Salah',
+    'Nilai',
+    'Status',
+    'Jumlah Pelanggaran',
+    'Status Pengerjaan',
+    'Catatan Integritas',
+  ];
 
-  const rows = results.map((r) => [
-    `"${r.timestamp || ''}"`,
-    `"${r.nama || ''}"`,
-    `"${r.mataPelajaran || CONFIG.MATA_PELAJARAN}"`,
-    `"${r.kelas || CONFIG.KELAS}"`,
-    `"${r.noAbsen || ''}"`,
-    `"${r.tglLahir || ''}"`,
-    r.benar,
-    r.salah,
-    r.nilai,
-    `"${r.status}"`,
-  ]);
+  const rows = results.map((r) => {
+    const isAutoSubmit = r.submissionReason === 'violation_limit';
+    const statusSubmit = isAutoSubmit
+      ? 'Auto-Submit (Batas Pelanggaran 3x)'
+      : 'Submit Normal';
+    const catatan = r.terminationNote || (r.violationsCount ? `${r.violationsCount}x peringatan pindah tab` : 'Tertib');
+
+    return [
+      `"${r.timestamp || ''}"`,
+      `"${r.nama || ''}"`,
+      `"${r.mataPelajaran || CONFIG.MATA_PELAJARAN}"`,
+      `"${r.kelas || CONFIG.KELAS}"`,
+      `"${r.noAbsen || ''}"`,
+      `"${r.tglLahir || ''}"`,
+      r.benar,
+      r.salah,
+      r.nilai,
+      `"${r.status}"`,
+      r.violationsCount || 0,
+      `"${statusSubmit}"`,
+      `"${catatan}"`,
+    ];
+  });
 
   const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -557,14 +589,26 @@ export function downloadResultsRecapPDF(results: ExamResult[]): void {
         else if (col.key === 'benar') val = String(r.benar ?? 0);
         else if (col.key === 'salah') val = String(r.salah ?? 0);
         else if (col.key === 'nilai') val = String(r.nilai ?? 0);
-        else if (col.key === 'status') val = isLulus ? 'Lulus' : 'Remedial';
+        else if (col.key === 'status') {
+          if (r.submissionReason === 'violation_limit') {
+            val = 'Auto-Submit';
+          } else if (r.violationsCount && r.violationsCount > 0) {
+            val = isLulus ? `Lulus (!${r.violationsCount}x)` : `Remedial (!${r.violationsCount}x)`;
+          } else {
+            val = isLulus ? 'Lulus' : 'Remedial';
+          }
+        }
         else if (col.key === 'timestamp') val = (r.timestamp || '-').substring(0, 16);
 
         doc.setFont('helvetica', col.key === 'nilai' ? 'bold' : 'normal');
         doc.setFontSize(7.8);
 
         if (col.key === 'status') {
-          doc.setTextColor(isLulus ? 22 : 185, isLulus ? 101 : 28, isLulus ? 52 : 28);
+          if (r.submissionReason === 'violation_limit') {
+            doc.setTextColor(220, 38, 38); // Red
+          } else {
+            doc.setTextColor(isLulus ? 22 : 185, isLulus ? 101 : 28, isLulus ? 52 : 28);
+          }
         } else if (col.key === 'nilai') {
           doc.setTextColor(isLulus ? 15 : 185, isLulus ? 23 : 28, isLulus ? 42 : 28);
         } else {

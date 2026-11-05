@@ -119,6 +119,11 @@ export interface StudentDiagnostic {
   recommendations: string[];
 }
 
+export interface ViolationLog {
+  timestamp: string;
+  reason: string;
+}
+
 export interface ExamResult {
   id?: string;
   timestamp: string;
@@ -134,6 +139,11 @@ export interface ExamResult {
   itemResponses?: Record<number, StudentItemResponse>;
   durasiPengerjaan?: string;
   mataPelajaran?: string;
+  // Anti-Cheat & Integritas Ujian
+  violationsCount?: number;
+  violationLogs?: ViolationLog[];
+  submissionReason?: 'normal' | 'time_out' | 'violation_limit';
+  terminationNote?: string;
 }
 
 export type AppStage = 1 | 2 | 3 | 4;
