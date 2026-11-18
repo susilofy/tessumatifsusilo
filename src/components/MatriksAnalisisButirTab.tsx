@@ -1,10 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { CONFIG } from '../config';
 import { ExamResult, Question } from '../types';
-import {
-  computeItemAnalysis,
-  exportItemAnalysisMatrixToCSV,
-} from '../utils/itemAnalysisHelper';
+import { computeItemAnalysis } from '../utils/itemAnalysisHelper';
+import { exportItemAnalysisMatrixToXLSX } from '../utils/excelExporter';
 import { downloadAnalisisButirPDF } from '../utils/pdfGenerator';
 import { StudentAnalysisModal } from './StudentAnalysisModal';
 import {
@@ -100,8 +98,8 @@ export const MatriksAnalisisButirTab: React.FC<MatriksAnalisisButirTabProps> = (
     };
   }, [itemStats]);
 
-  const handleExportCSV = () => {
-    exportItemAnalysisMatrixToCSV(results, questions, itemStats, allResponses);
+  const handleExportXLSX = () => {
+    exportItemAnalysisMatrixToXLSX(results, questions, itemStats, allResponses);
   };
 
   const handleDownloadPDF = () => {
@@ -134,16 +132,16 @@ export const MatriksAnalisisButirTab: React.FC<MatriksAnalisisButirTabProps> = (
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Tombol Ekspor CSV */}
+            {/* Tombol Ekspor Excel (.xlsx) Multi-Sheet */}
             <button
-              id="btn-export-matriks-csv"
-              onClick={handleExportCSV}
+              id="btn-export-matriks-xlsx"
+              onClick={handleExportXLSX}
               disabled={results.length === 0}
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs sm:text-sm shadow-md transition-all cursor-pointer disabled:opacity-50"
-              title="Unduh file spreadsheet matriks jawaban siswa (Excel/CSV)"
+              title="Unduh file Microsoft Excel asli (.xlsx) Matriks Analisis Butir Multi-Sheet"
             >
               <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
-              <span>Ekspor Matriks (CSV/Excel)</span>
+              <span>Ekspor Matriks (Excel .xlsx)</span>
             </button>
 
             {/* Tombol Cetak PDF */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { CONFIG } from '../config';
 import { ExamResult, Question } from '../types';
 import { gasService } from '../services/gasService';
@@ -7,8 +7,8 @@ import {
   downloadExamQuestionsPDF,
   downloadResultsRecapPDF,
   downloadKisiKisiPDF,
-  exportResultsToCSV,
 } from '../utils/pdfGenerator';
+import { exportResultsToXLSX } from '../utils/excelExporter';
 import { QuestionEditorModal } from './QuestionEditorModal';
 import { GasGuideModal } from './GasGuideModal';
 import { GasSettingsModal } from './GasSettingsModal';
@@ -47,6 +47,7 @@ import {
   ShieldCheck,
   ShieldAlert,
   AlertTriangle,
+  Radio,
 } from 'lucide-react';
 
 interface Stage4TeacherPanelProps {
@@ -108,28 +109,149 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
     message: string;
   } | null>(null);
 
-  // Ambil data dari Google Apps Script saat komponen dimuat
-  const loadDataFromGAS = async () => {
-    setIsLoading(true);
+  // State sinkronisasi otomatis (Live Real-time Auto-Sync)
+  const [isLiveSyncEnabled, setIsLiveSyncEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('sd3_teacher_live_sync');
+      return saved !== null ? saved === 'true' : true; // Default aktif
+    } catch {
+      return true;
+    }
+  });
+  const [isAutoRefreshing, setIsAutoRefreshing] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState<string>('');
+  const [newSubmissionToast, setNewSubmissionToast] = useState<{
+    name: string;
+    count: number;
+  } | null>(null);
+
+  const lastResultsLengthRef = useRef<number>(0);
+  const isFetchingRef = useRef<boolean>(false);
+  const isDeletingRef = useRef<boolean>(false);
+  isDeletingRef.current = isDeleting || isDeletingAll;
+
+  // Fungsi ambil data dari Google Apps Script & Penyimpanan Lokal
+  const loadDataFromGAS = async (isBackground = false) => {
+    if (isFetchingRef.current || isDeletingRef.current) return;
+    isFetchingRef.current = true;
+
+    if (!isBackground) {
+      setIsLoading(true);
+    } else {
+      setIsAutoRefreshing(true);
+    }
     setApiError(null);
+
     try {
       const data = await gasService.fetchExamResults();
+
+      // Deteksi jika ada siswa baru masuk saat auto-refresh latar belakang
+      if (lastResultsLengthRef.current > 0 && data.length > lastResultsLengthRef.current) {
+        const addedCount = data.length - lastResultsLengthRef.current;
+        const latestStudent = data[0]?.nama || 'Siswa';
+        setNewSubmissionToast({ name: latestStudent, count: addedCount });
+        setTimeout(() => setNewSubmissionToast(null), 5000);
+      }
+      lastResultsLengthRef.current = data.length;
+
       setResults(data);
-      setIsLoading(false);
+      setLastSyncedTime(new Date().toLocaleTimeString('id-ID'));
     } catch (err: any) {
+      if (!isBackground) {
+        const localData = gasService.getLocalExamResults();
+        setResults(localData);
+        lastResultsLengthRef.current = localData.length;
+        setApiError(
+          'Sinkronisasi Google Spreadsheet belum aktif. Data hasil tes dimuat dari memori lokal perangkat ini.'
+        );
+      }
+    } finally {
       setIsLoading(false);
-      // Fallback ke penyimpanan lokal
-      const localData = gasService.getLocalExamResults();
-      setResults(localData);
-      setApiError(
-        'Sinkronisasi Google Spreadsheet belum aktif. Data hasil tes dimuat dari memori lokal perangkat ini.'
-      );
+      setIsAutoRefreshing(false);
+      isFetchingRef.current = false;
     }
   };
 
+  // Toggle Live Auto-Sync
+  const handleToggleLiveSync = () => {
+    setIsLiveSyncEnabled((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('sd3_teacher_live_sync', String(next));
+      } catch {
+        // ignore
+      }
+      if (next) {
+        loadDataFromGAS(true);
+      }
+      return next;
+    });
+  };
+
+  // Lifecycle Sinkronisasi Real-Time Otomatis
   useEffect(() => {
-    loadDataFromGAS();
-  }, []);
+    // 1. Initial Load
+    loadDataFromGAS(false);
+
+    // 2. Interval Polling Latar Belakang (setiap 10 detik tanpa mengganggu tampilan)
+    const intervalId = setInterval(() => {
+      if (isLiveSyncEnabled && !document.hidden && !isDeletingRef.current) {
+        loadDataFromGAS(true);
+      }
+    }, 10000);
+
+    // 3. Listener Fokus Jendela / Tab Browser
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isLiveSyncEnabled) {
+        loadDataFromGAS(true);
+      }
+    };
+    const handleWindowFocus = () => {
+      if (isLiveSyncEnabled) {
+        loadDataFromGAS(true);
+      }
+    };
+
+    // 4. Listener BroadcastChannel (Sinkronisasi instan antar-tab/jendela)
+    let broadcastChannel: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      broadcastChannel = new BroadcastChannel('sd3_exam_sync_channel');
+      broadcastChannel.onmessage = (event) => {
+        if (event.data?.type === 'NEW_SUBMISSION') {
+          loadDataFromGAS(true);
+          if (event.data?.studentName) {
+            setNewSubmissionToast({ name: event.data.studentName, count: 1 });
+            setTimeout(() => setNewSubmissionToast(null), 5000);
+          }
+        } else if (event.data?.type === 'DATA_CLEARED' || event.data?.type === 'DATA_DELETED') {
+          loadDataFromGAS(true);
+        }
+      };
+    }
+
+    // 5. Listener Custom Window Event
+    const handleCustomSubmitted = (e: any) => {
+      loadDataFromGAS(true);
+      if (e.detail?.nama) {
+        setNewSubmissionToast({ name: e.detail.nama, count: 1 });
+        setTimeout(() => setNewSubmissionToast(null), 5000);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('sd3_exam_submitted', handleCustomSubmitted);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('sd3_exam_submitted', handleCustomSubmitted);
+      if (broadcastChannel) {
+        broadcastChannel.close();
+      }
+    };
+  }, [isLiveSyncEnabled]);
 
   // Handler Hapus Data Siswa Satuan
   const handleConfirmDelete = async () => {
@@ -357,16 +479,16 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
               <span>Download Rekap (PDF)</span>
             </button>
 
-            {/* Tombol Download Rekap File CSV */}
+            {/* Tombol Download Rekap File Excel (.xlsx) Multi-Sheet */}
             <button
-              id="btn-export-rekap-csv"
-              onClick={() => exportResultsToCSV(results)}
+              id="btn-export-rekap-xlsx"
+              onClick={() => exportResultsToXLSX(results, questions)}
               disabled={results.length === 0}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl transition-colors border border-emerald-300 disabled:opacity-50 cursor-pointer"
-              title="Unduh Rekap Hasil Tes dalam format CSV (Excel)"
+              title="Unduh seluruh rekap nilai siswa dalam format Microsoft Excel asli (.xlsx) multi-sheet"
             >
               <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-              <span>Download Rekap (Excel/CSV)</span>
+              <span>Download Rekap (Excel .xlsx)</span>
             </button>
 
             {/* Tombol Hapus Semua Data Siswa Sekaligus */}
@@ -384,12 +506,55 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
               <span>Hapus Semua Data</span>
             </button>
 
-            {/* Tombol Refresh Data */}
+            {/* Tombol & Status Auto-Sync Real-time */}
+            <button
+              id="btn-toggle-live-sync"
+              onClick={handleToggleLiveSync}
+              title={
+                isLiveSyncEnabled
+                  ? `Sinkronisasi Otomatis Aktif (Terakhir: ${lastSyncedTime || 'Baru saja'}) - Klik untuk jeda`
+                  : 'Sinkronisasi Otomatis Dijeda - Klik untuk aktifkan kembali'
+              }
+              className={`inline-flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-xl border transition-all cursor-pointer ${
+                isLiveSyncEnabled
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-2xs'
+                  : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200'
+              }`}
+            >
+              <span className="relative flex h-2.5 w-2.5">
+                {isLiveSyncEnabled && (
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                )}
+                <span
+                  className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                    isLiveSyncEnabled
+                      ? isAutoRefreshing
+                        ? 'bg-blue-500 animate-pulse'
+                        : 'bg-emerald-500'
+                      : 'bg-slate-400'
+                  }`}
+                ></span>
+              </span>
+              <div className="flex flex-col text-left leading-tight">
+                <span className="font-bold flex items-center gap-1">
+                  {isLiveSyncEnabled ? 'Live Auto-Sync' : 'Auto-Sync Dijeda'}
+                  {isAutoRefreshing && <RefreshCw className="w-2.5 h-2.5 animate-spin text-emerald-700 inline" />}
+                </span>
+                {lastSyncedTime && isLiveSyncEnabled && (
+                  <span className="text-[10px] text-emerald-600 font-normal">
+                    {isAutoRefreshing ? 'Memperbarui...' : lastSyncedTime}
+                  </span>
+                )}
+              </div>
+            </button>
+
+            {/* Tombol Refresh Data Manual */}
             <button
               id="btn-refresh-data-top"
-              onClick={loadDataFromGAS}
+              onClick={() => loadDataFromGAS(false)}
               disabled={isLoading}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors shadow-xs disabled:opacity-50 cursor-pointer"
+              title="Perbarui data secara manual sekarang"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
               <span>REFRESH DATA</span>
@@ -736,18 +901,14 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
 
               <button
                 type="button"
-                id="btn-quick-export-csv"
-                onClick={() =>
-                  exportResultsToCSV(
-                    filteredAndSortedResults.length > 0 ? filteredAndSortedResults : results
-                  )
-                }
+                id="btn-quick-export-xlsx"
+                onClick={() => exportResultsToXLSX(results, questions)}
                 disabled={results.length === 0}
                 className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors disabled:opacity-50 cursor-pointer shadow-2xs"
-                title="Download Rekap Nilai Excel/CSV"
+                title="Download seluruh rekap nilai dalam format Excel asli (.xlsx) multi-sheet"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Unduh Excel/CSV</span>
+                <span>Unduh Excel (.xlsx)</span>
               </button>
 
               <button
@@ -1334,6 +1495,37 @@ export const Stage4TeacherPanel: React.FC<Stage4TeacherPanelProps> = ({
           </div>
         </div>
       )}
+
+      {/* Toast Notifikasi Otomatis Masuk Nilai Siswa Baru */}
+      {newSubmissionToast && (
+        <div className="fixed bottom-6 right-6 z-50 animate-bounce duration-700 max-w-sm pointer-events-auto">
+          <div className="bg-emerald-600 text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 border border-emerald-400">
+            <span className="relative flex h-3 w-3 shrink-0">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-white"></span>
+            </span>
+            <div className="text-left flex-1 min-w-0">
+              <p className="text-xs font-black tracking-wide flex items-center gap-1.5">
+                <span>Jawaban Siswa Masuk!</span>
+                <span className="px-1.5 py-0.5 rounded-full bg-emerald-700 text-[10px] font-bold">
+                  +{newSubmissionToast.count} Data Baru
+                </span>
+              </p>
+              <p className="text-[11px] opacity-90 truncate">
+                <span className="font-bold underline">{newSubmissionToast.name}</span> baru saja menyelesaikan ujian. Rekap otomatis terupdate!
+              </p>
+            </div>
+            <button
+              onClick={() => setNewSubmissionToast(null)}
+              className="text-white hover:text-emerald-200 text-base font-bold cursor-pointer shrink-0 ml-1 leading-none p-1"
+              title="Tutup notifikasi"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

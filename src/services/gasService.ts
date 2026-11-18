@@ -218,6 +218,20 @@ export const gasService = {
     // 1. Selalu amankan penyimpanan ke perangkat lokal terlebih dahulu (Zero Data Loss)
     this.saveLocalExamResult(result);
 
+    // Kirim notifikasi sinkronisasi otomatis ke seluruh tab & Panel Guru secara real-time
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('sd3_exam_submitted', { detail: result }));
+        if ('BroadcastChannel' in window) {
+          const ch = new BroadcastChannel('sd3_exam_sync_channel');
+          ch.postMessage({ type: 'NEW_SUBMISSION', studentName: result.nama, result });
+          ch.close();
+        }
+      }
+    } catch {
+      // ignore
+    }
+
     const url = this.getGasUrl();
     if (!url || !url.startsWith('http')) {
       return {

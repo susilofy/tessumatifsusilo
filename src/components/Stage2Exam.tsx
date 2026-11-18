@@ -110,6 +110,7 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
     level: 1 | 2;
     count: number;
     time: string;
+    reason?: string;
   } | null>(null);
   const [isAutoSubmitting, setIsAutoSubmitting] = useState(false);
   const [autoSubmitNotice, setAutoSubmitNotice] = useState<string | null>(null);
@@ -127,6 +128,8 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
   violationCountRef.current = violationCount;
   const violationLogsRef = useRef<ViolationLog[]>([]);
   violationLogsRef.current = violationLogs;
+  // Ref untuk menandai apakah siswa sudah pernah masuk ke mode fullscreen
+  const hasEnteredFullscreenRef = useRef<boolean>(isFullscreenActive());
 
   const currentQ = shuffledQuestions[currentIndex];
   const totalQuestions = shuffledQuestions.length;
@@ -374,7 +377,7 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
     isFinishedRef.current = true;
     setIsAutoSubmitting(true);
     setAutoSubmitNotice(
-      'Ujian dihentikan otomatis karena terdeteksi meninggalkan halaman sebanyak 3 kali. Jawaban yang telah diisi sedang dikirim ke server...'
+      'Ujian dihentikan otomatis karena terdeteksi pelanggaran (Keluar Layar Penuh / Berpindah Tab) sebanyak 3 kali. Jawaban yang telah diisi sedang dikirim ke server...'
     );
 
     const baseResult = calculateResult();
@@ -383,7 +386,9 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
       violationsCount: finalCount,
       violationLogs: finalLogs,
       submissionReason: 'violation_limit',
-      terminationNote: 'Dihentikan oleh Sistem karena Pelanggaran Berpindah Tab (Mencapai batas 3x)',
+      terminationNote:
+        reason ||
+        'Dihentikan oleh Sistem karena Pelanggaran Keluar Layar Penuh / Berpindah Tab (Mencapai batas 3x)',
     };
 
     try {
@@ -396,13 +401,64 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
     }
   };
 
-  // 1. Effect: Fullscreen Mandatory
+  // Fungsi pencatat pelanggaran integritas ujian (Esc, keluar fullscreen, pindah tab, buka aplikasi lain)
+  const recordViolation = (reason: string) => {
+    if (!strictModeRef.current || isFinishedRef.current || isSubmittingRef.current) return;
+
+    const now = Date.now();
+    // Debounce 1.5 detik agar kombinasi Esc + fullscreenchange + blur tidak terhitung berulang kali untuk 1 tindakan
+    if (now - lastViolationTimeRef.current < 1500) return;
+    lastViolationTimeRef.current = now;
+
+    const prevCount = violationCountRef.current;
+    const newCount = prevCount + 1;
+    violationCountRef.current = newCount;
+    setViolationCount(newCount);
+
+    const timeStr = new Date().toLocaleTimeString('id-ID');
+    const newLog: ViolationLog = {
+      timestamp: timeStr,
+      reason,
+    };
+    const updatedLogs = [...violationLogsRef.current, newLog];
+    violationLogsRef.current = updatedLogs;
+    setViolationLogs(updatedLogs);
+
+    if (newCount === 1) {
+      setWarningModal({
+        level: 1,
+        count: 1,
+        time: timeStr,
+        reason,
+      });
+    } else if (newCount === 2) {
+      setWarningModal({
+        level: 2,
+        count: 2,
+        time: timeStr,
+        reason,
+      });
+    } else if (newCount >= 3) {
+      setWarningModal(null);
+      setIsFullscreenBlocked(false);
+      triggerAutoSubmit(
+        'Dihentikan oleh Sistem karena Pelanggaran Keluar Layar Penuh / Berpindah Tab (Mencapai batas 3x)',
+        3,
+        updatedLogs
+      );
+    }
+  };
+
+  // 1. Effect: Fullscreen Mandatory & Esc Detection
   useEffect(() => {
     if (!strictSecurityMode) return;
 
     // Coba minta masuk fullscreen di awal
     enterFullscreen().then((success) => {
-      if (!success && !isFullscreenActive()) {
+      if (success || isFullscreenActive()) {
+        hasEnteredFullscreenRef.current = true;
+        setIsFullscreenBlocked(false);
+      } else {
         setIsFullscreenBlocked(true);
       }
     });
@@ -412,7 +468,12 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
       const active = isFullscreenActive();
       if (!active) {
         setIsFullscreenBlocked(true);
+        // Jika sebelumnya sudah pernah masuk fullscreen, maka keluar fullscreen dihitung sebagai pelanggaran!
+        if (hasEnteredFullscreenRef.current) {
+          recordViolation('Keluar dari mode layar penuh (Menekan tombol Esc / keluar fullscreen)');
+        }
       } else {
+        hasEnteredFullscreenRef.current = true;
         setIsFullscreenBlocked(false);
       }
     };
@@ -434,50 +495,6 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
   useEffect(() => {
     if (!strictSecurityMode) return;
 
-    const recordViolation = (reason: string) => {
-      if (!strictModeRef.current || isFinishedRef.current || isSubmittingRef.current) return;
-
-      const now = Date.now();
-      // Debounce 2 detik agar blur dan visibilitychange tidak terhitung ganda
-      if (now - lastViolationTimeRef.current < 2000) return;
-      lastViolationTimeRef.current = now;
-
-      const prevCount = violationCountRef.current;
-      const newCount = prevCount + 1;
-      violationCountRef.current = newCount;
-      setViolationCount(newCount);
-
-      const timeStr = new Date().toLocaleTimeString('id-ID');
-      const newLog: ViolationLog = {
-        timestamp: timeStr,
-        reason,
-      };
-      const updatedLogs = [...violationLogsRef.current, newLog];
-      violationLogsRef.current = updatedLogs;
-      setViolationLogs(updatedLogs);
-
-      if (newCount === 1) {
-        setWarningModal({
-          level: 1,
-          count: 1,
-          time: timeStr,
-        });
-      } else if (newCount === 2) {
-        setWarningModal({
-          level: 2,
-          count: 2,
-          time: timeStr,
-        });
-      } else if (newCount >= 3) {
-        setWarningModal(null);
-        triggerAutoSubmit(
-          'Dihentikan oleh Sistem karena Pelanggaran Berpindah Tab (Mencapai batas 3x)',
-          3,
-          updatedLogs
-        );
-      }
-    };
-
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
         recordViolation('Meninggalkan tab / browser diminimalkan');
@@ -497,7 +514,7 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
     };
   }, [strictSecurityMode]);
 
-  // 3. Effect: Pencegahan Keluar / Refresh / Shortcut Salin-Tempel & Context Menu
+  // 3. Effect: Pencegahan Keluar / Refresh / Shortcut Salin-Tempel / Esc & Context Menu
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (!isFinishedRef.current) {
@@ -518,6 +535,14 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
       if (!strictModeRef.current) return;
       const key = e.key.toLowerCase();
 
+      // Deteksi penekanan tombol Escape secara langsung
+      if (e.key === 'Escape' || e.key === 'Esc' || e.code === 'Escape') {
+        if (hasEnteredFullscreenRef.current) {
+          recordViolation('Keluar dari mode layar penuh (Menekan tombol Esc)');
+          setIsFullscreenBlocked(true);
+        }
+      }
+
       // Blokir shortcut salin-tempel dan print/save: Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+U, Ctrl+P, Ctrl+S, Ctrl+R
       if ((e.ctrlKey || e.metaKey) && ['c', 'v', 'x', 'u', 'p', 's', 'r'].includes(key)) {
         e.preventDefault();
@@ -525,8 +550,8 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
         return false;
       }
 
-      // Blokir F12, F5
-      if (e.key === 'F12' || e.key === 'F5') {
+      // Blokir F12, F5, F11
+      if (e.key === 'F12' || e.key === 'F5' || e.key === 'F11') {
         e.preventDefault();
         e.stopPropagation();
         return false;
@@ -1022,8 +1047,8 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
         </div>
       )}
 
-      {/* 1. OVERLAY PEMBLOKIR: MODE LAYAR PENUH (FULLSCREEN MANDATORY) */}
-      {strictSecurityMode && isFullscreenBlocked && !isFinishedRef.current && !isAutoSubmitting && (
+      {/* 1. OVERLAY PEMBLOKIR: MODE LAYAR PENUH (FULLSCREEN MANDATORY - TAMPIL JIKA BELUM ADA PERINGATAN) */}
+      {strictSecurityMode && isFullscreenBlocked && !warningModal && !isFinishedRef.current && !isAutoSubmitting && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-950/90 backdrop-blur-md animate-in fade-in duration-200">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border-2 border-red-500 text-center space-y-4">
             <div className="w-16 h-16 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto shadow-inner">
@@ -1055,6 +1080,7 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
               onClick={async () => {
                 const success = await enterFullscreen();
                 if (success || isFullscreenActive()) {
+                  hasEnteredFullscreenRef.current = true;
                   setIsFullscreenBlocked(false);
                 }
               }}
@@ -1067,9 +1093,9 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
         </div>
       )}
 
-      {/* 2. MODAL PERINGATAN DETEKSI PINDAH TAB (PELANGGARAN 1 DAN 2) */}
+      {/* 2. MODAL PERINGATAN DETEKSI PINDAH TAB / ESC KELUAR FULLSCREEN (PELANGGARAN 1 DAN 2) */}
       {warningModal && !isAutoSubmitting && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-sm animate-in fade-in duration-150">
           <div
             className={`bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border-2 text-center space-y-4 ${
               warningModal.level === 2 ? 'border-red-600' : 'border-amber-500'
@@ -1096,17 +1122,23 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
 
               <h3 className="text-base sm:text-lg font-black text-slate-900">
                 {warningModal.level === 1
-                  ? 'Anda Terdeteksi Meninggalkan Halaman Ujian!'
+                  ? 'Anda Terdeteksi Melakukan Pelanggaran!'
                   : 'Segera Kembali ke Soal Ujian!'}
               </h3>
 
               <p className="text-xs text-slate-600 mt-2 leading-relaxed">
                 {warningModal.level === 1
-                  ? 'Aktivitas meninggalkan tab browser atau beralih aplikasi terekam oleh sistem pengawas. Harap tetap fokus pada lembar soal hingga selesai.'
-                  : 'PERINGATAN DARURAT: Satu kali pelanggaran lagi maka ujian akan langsung dihentikan otomatis dan jawaban Anda dikirim paksa (Auto-Submit) oleh sistem!'}
+                  ? 'Aktivitas keluar layar penuh (menekan Esc) atau meninggalkan halaman ujian terekam oleh sistem pengawas (1 dari batas 3 kali). Harap tetap fokus pada lembar soal.'
+                  : 'PERINGATAN DARURAT: Anda telah melakukan 2 pelanggaran! Satu kali lagi keluar layar penuh atau meninggalkan ujian, maka lembar soal langsung DIKUNCI dan jawaban dikirim otomatis (Auto-Submit)!'}
               </p>
 
-              <div className="mt-3 py-1.5 px-3 bg-slate-100 rounded-lg text-[11px] text-slate-600 font-mono inline-block">
+              {warningModal.reason && (
+                <div className="mt-2.5 py-1.5 px-3 bg-red-50 text-red-700 rounded-lg text-xs font-semibold text-center border border-red-200">
+                  {warningModal.reason}
+                </div>
+              )}
+
+              <div className="mt-2 py-1 px-3 bg-slate-100 rounded-lg text-[11px] text-slate-600 font-mono inline-block">
                 Waktu Pelanggaran: {warningModal.time}
               </div>
             </div>
@@ -1116,19 +1148,26 @@ export const Stage2Exam: React.FC<Stage2ExamProps> = ({
               type="button"
               onClick={async () => {
                 setWarningModal(null);
-                if (strictSecurityMode && !isFullscreenActive()) {
-                  await enterFullscreen();
+                if (strictSecurityMode) {
+                  const success = await enterFullscreen();
+                  if (success || isFullscreenActive()) {
+                    hasEnteredFullscreenRef.current = true;
+                    setIsFullscreenBlocked(false);
+                  }
                 }
               }}
-              className={`w-full py-3.5 px-5 rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition-all cursor-pointer ${
+              className={`w-full py-3.5 px-5 rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 ${
                 warningModal.level === 2
                   ? 'bg-red-600 hover:bg-red-700 shadow-red-600/30'
                   : 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/30'
               }`}
             >
-              {warningModal.level === 1
-                ? 'Saya Mengerti & Kembali Mengerjakan'
-                : 'Kembali ke Soal Ujian Sekarang'}
+              <Maximize2 className="w-4 h-4" />
+              <span>
+                {warningModal.level === 1
+                  ? 'Aktifkan Layar Penuh & Lanjutkan Ujian'
+                  : 'Aktifkan Layar Penuh & Kembali ke Soal Sekarang'}
+              </span>
             </button>
           </div>
         </div>
